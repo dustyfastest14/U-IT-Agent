@@ -20,7 +20,7 @@
 
 ## 📂 项目结构
 
-`	ext
+``	ext
 U-IT-Agent/
 ├── 启动.bat                 # Windows 一键启动脚本
 ├── README.md               # 项目使用与架构文档
