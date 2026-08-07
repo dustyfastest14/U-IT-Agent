@@ -6,7 +6,7 @@
 
 ## 💡 核心特性
 
-- **双击即用**：提供 Windows `启动.bat` 批处理入口，无需复杂命令行配置。
+- **双击即用**：提供 Windows `启动.bat` 批处理入口，自动优先检测并使用 U 盘内便携 Python 环境。
 - **OpenAI 兼容 API**：支持任意 OpenAI 兼容的 LLM 接口，借助 Tool Calling 实现多轮智能诊断决策。
 - **只读诊断与安全确认**：
   - 默认优先使用只读系统工具收集进程、服务、磁盘/内存、事件日志及网络连通性。
@@ -22,11 +22,12 @@
 
 ```text
 U-IT-Agent/
-├── 启动.bat                 # Windows 一键启动脚本
+├── 启动.bat                 # Windows 一键启动脚本 (优先检测 python/python.exe)
 ├── README.md               # 项目使用与架构文档
 ├── requirements.txt        # Python 依赖包列表
 ├── .env.example            # 环境变量配置模板
 ├── .gitignore              # Git 忽略规则
+├── python/                 # (可选) U 盘便携版 Python 目录
 ├── agent/                  # Agent 核心实现
 │   ├── config.py           # 配置加载与安全关键词白名单/黑名单
 │   ├── llm.py              # OpenAI API 客户端 & Tool Calling 轮次控制 Loop
@@ -55,18 +56,32 @@ U-IT-Agent/
 
 ## 🚀 快速开始
 
-### 1. 环境依赖
+### 1. 环境依赖与便携 Python 配置
 
-- Windows 10 / 11 / Server
-- Python 3.10+（如果使用便携 Python，放至 `python/` 目录即可）
+U-IT-Agent 支持两种运行模式：
 
-### 2. 安装 Python 依赖
+#### 模式 A：使用目标机器系统 Python (简单快速)
+- 目标 Windows 电脑已安装 Python 3.10+ 并配置系统环境变量。
+- 运行依赖安装：
+  ```powershell
+  pip install -r requirements.txt
+  ```
 
-```powershell
-pip install -r requirements.txt
-```
+#### 模式 B：制作纯 U 盘绿色便携版 (即插即用，无需目标机安装 Python)
+1. 从 Python 官网下载 Windows 便携压缩包 (Embedded package)，例如 `python-3.11.9-embed-amd64.zip`。
+2. 解压 zip 包中的所有文件，放置在项目根目录下的 **`python/`** 文件夹中（确保 `python/python.exe` 路径存在）。
+3. 取消便携 Python 的 import 限制：
+   - 打开 `python/python311._pth` (文件名取决于具体版本)，**取消注释** `import site` 这行。
+4. 为便携 Python 安装项目依赖：
+   - 在便携 Python 目录下安装依赖：
+     ```powershell
+     .\python\python.exe -m pip install -r requirements.txt
+     ```
+   - 双击 `启动.bat` 脚本将**自动优先识别并运行 `python/python.exe`**。
 
-### 3. 配置 API 密钥
+---
+
+### 2. 配置 API 密钥
 
 复制项目根目录下的 `.env.example` 并重命名为 `.env`：
 
@@ -79,7 +94,9 @@ CONFIRM_MODE=true
 
 > **注意**：若运行在内网环境且 API 接口需要代理访问，可确保本机相关 HTTP/HTTPS 代理配置正常。
 
-### 4. 运行 Agent
+---
+
+### 3. 运行 Agent
 
 双击根目录下的 **`启动.bat`**，或在命令行中运行：
 
