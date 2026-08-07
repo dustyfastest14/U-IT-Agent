@@ -20,35 +20,8 @@
 
 ## 📂 项目结构
 
-``	ext
-U-IT-Agent/
-├── 启动.bat                 # Windows 一键启动脚本
-├── README.md               # 项目使用与架构文档
-├── requirements.txt        # Python 依赖包列表
-├── .env.example            # 环境变量配置模板
-├── .gitignore              # Git 忽略规则
-├── agent/                  # Agent 核心实现
-│   ├── config.py           # 配置加载与安全关键词白名单/黑名单
-│   ├── llm.py              # OpenAI API 客户端 & Tool Calling 轮次控制 Loop
-│   ├── main.py             # CLI REPL 交互入口与快捷指令解析
-│   ├── memory.py           # 机器档案与知识库存储管理
-│   ├── skills.py           # Skill 扫描、加载与本地/Zip 安装器
-│   ├── prompts/
-│   │   └── system.md       # 系统 Prompt 与排查行为规范
-│   └── tools/
-│       ├── system.py       # 内置只读系统诊断工具集 (进程/服务/磁盘/日志/网络)
-│       └── shell.py        # 受限 PowerShell / 脚本执行器 (带安全提示确认)
-├── skills/                 # 可扩展 Skill 技能包目录
-│   └── _example-network-diag/
-│       └── SKILL.md        # 示例网络诊断 Skill 包
-├── scripts/                # 全局预置 PowerShell 诊断脚本目录
-│   └── check_net.ps1       # 示例网络深入排查 PowerShell 脚本
-├── memory/                 # 长期记忆与经验存储
-│   ├── machines/           # 主机档案
-│   ├── knowledge/          # 沉淀的 Markdown 经验知识库
-│   └── episodes/           # 历史排查案例 JSON
-├── workspace/              # 报告与临时输出区 (Markdown 诊断报告)
-└── logs/                   # 日志目录
+`	ext
+
 `
 
 ---
