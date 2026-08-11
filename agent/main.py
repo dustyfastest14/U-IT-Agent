@@ -1,4 +1,12 @@
 import sys
+import os
+from pathlib import Path
+
+# Ensure project root is in sys.path
+BASE_DIR = Path(__file__).resolve().parent.parent
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
+
 from agent.memory import MemoryManager
 from agent.skills import SkillManager
 from agent.llm import LLMEngine
@@ -15,7 +23,7 @@ def print_banner():
 def main():
     if not API_KEY or API_KEY == "your_actual_api_key_here":
         print("[!] 警告: 未在 .env 中检测到有效的 API_KEY。网络推理可能会失败。")
-        print("    请编辑根目录下的 .env 配置文件填入真实的 API 密钥。")
+        print("    请在项目根目录下创建 .env 文件并填入真实的 API 密钥。")
     
     memory_mgr = MemoryManager()
     skill_mgr = SkillManager()
