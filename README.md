@@ -2,11 +2,13 @@
 
 > 一款专为 **Windows** 环境设计、支持 **U 盘便携使用** 的 AI 系统/软件故障诊断与排查 Agent。
 
+[![Release](https://img.shields.io/github/v/release/dustyfastest14/U-IT-Agent?label=Download%20Portable%20Zip&color=blue)](https://github.com/dustyfastest14/U-IT-Agent/releases/latest)
+
 ---
 
 ## 💡 核心特性
 
-- **双击即用**：提供 Windows `启动.bat` 批处理入口，自动优先检测并使用 U 盘内便携 Python 环境。
+- **双击即用**：提供 Windows `启动.bat` 批处理入口，自动优先检测并使用内置绿色便携 Python 环境。
 - **OpenAI 兼容 API**：支持任意 OpenAI 兼容的 LLM 接口，借助 Tool Calling 实现多轮智能诊断决策。
 - **只读诊断与安全确认**：
   - 默认优先使用只读系统工具收集进程、服务、磁盘/内存、事件日志及网络连通性。
@@ -27,7 +29,7 @@ U-IT-Agent/
 ├── requirements.txt        # Python 依赖包列表
 ├── .env.example            # 环境变量配置模板
 ├── .gitignore              # Git 忽略规则
-├── python/                 # (可选) U 盘便携版 Python 目录
+├── python/                 # (可选) U 盘便携版 Python 目录 (含全部依赖)
 ├── agent/                  # Agent 核心实现
 │   ├── config.py           # 配置加载与安全关键词白名单/黑名单
 │   ├── llm.py              # OpenAI API 客户端 & Tool Calling 轮次控制 Loop
@@ -56,28 +58,19 @@ U-IT-Agent/
 
 ## 🚀 快速开始
 
-### 1. 环境依赖与便携 Python 配置
+### 1. 便捷使用方式
 
-U-IT-Agent 支持两种运行模式：
+#### 方式一：直接下载开箱即用便携版 (推荐，免安装任何环境)
+- 在 [GitHub Releases](https://github.com/dustyfastest14/U-IT-Agent/releases/latest) 下载最新发布的 **`U-IT-Agent-Portable-v1.0.zip`** (约 20 MB)。
+- 解压到 U 盘或电脑任意目录即可，里面已预先内置了绿色 Python 3.11 与全部依赖库。
 
-#### 模式 A：使用目标机器系统 Python (简单快速)
-- 目标 Windows 电脑已安装 Python 3.10+ 并配置系统环境变量。
-- 运行依赖安装：
+#### 方式二：克隆源码使用系统 Python
+- 目标电脑已安装 Python 3.10+ 环境。
+- 安装依赖并运行：
   ```powershell
   pip install -r requirements.txt
+  python agent/main.py
   ```
-
-#### 模式 B：制作纯 U 盘绿色便携版 (即插即用，无需目标机安装 Python)
-1. 从 Python 官网下载 Windows 便携压缩包 (Embedded package)，例如 `python-3.11.9-embed-amd64.zip`。
-2. 解压 zip 包中的所有文件，放置在项目根目录下的 **`python/`** 文件夹中（确保 `python/python.exe` 路径存在）。
-3. 取消便携 Python 的 import 限制：
-   - 打开 `python/python311._pth` (文件名取决于具体版本)，**取消注释** `import site` 这行。
-4. 为便携 Python 安装项目依赖：
-   - 在便携 Python 目录下安装依赖：
-     ```powershell
-     .\python\python.exe -m pip install -r requirements.txt
-     ```
-   - 双击 `启动.bat` 脚本将**自动优先识别并运行 `python/python.exe`**。
 
 ---
 
