@@ -1,8 +1,9 @@
 import json
+import sys
 from pathlib import Path
 from typing import List, Dict, Any
 from openai import OpenAI
-from agent.config import API_BASE, API_KEY, MODEL, BASE_DIR
+from agent.config import API_BASE, API_KEY, MODEL, BASE_DIR, MAX_TOOL_ROUNDS
 from agent.memory import MemoryManager
 from agent.skills import SkillManager
 import agent.tools.system as sys_tools
@@ -47,7 +48,7 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "get_event_errors",
-            "description": "获取最近 N 小时内的系统与应用 Error 错误日志",
+            "description": "获取最近 N 小时内的系统与应用 Error/Critical 错误日志",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -73,7 +74,7 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "run_powershell",
-            "description": "受限安全执行单条 PowerShell 诊断或修复命令",
+            "description": "安全执行单条 PowerShell 诊断或修复命令（只读查询类命令自动放行，修改类操作提示用户确认）",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -131,7 +132,7 @@ TOOLS_SCHEMA = [
 
 class LLMEngine:
     def __init__(self, memory_mgr: MemoryManager, skill_mgr: SkillManager):
-        self.client = OpenAI(base_url=API_BASE, api_key=API_KEY)
+        self.client = OpenAI(base_url=API_BASE, api_key=API_KEY or 'none')
         self.memory_mgr = memory_mgr
         self.skill_mgr = skill_mgr
         
@@ -150,58 +151,139 @@ class LLMEngine:
         sys_content = self._build_system_context()
         full_messages = [{"role": "system", "content": sys_content}] + messages
         
-        for _ in range(5):  # Tool Calling 交互迭代最多 5 轮
+        for round_idx in range(MAX_TOOL_ROUNDS):
             try:
-                response = self.client.chat.completions.create(
+                stream = self.client.chat.completions.create(
                     model=MODEL,
                     messages=full_messages,
                     tools=TOOLS_SCHEMA,
-                    tool_choice="auto"
+                    tool_choice="auto",
+                    stream=True
                 )
             except Exception as e:
-                return f"[API 调用异常]: {str(e)}"
+                err_msg = f"[API 调用异常]: {str(e)}"
+                print(f"\n{err_msg}")
+                return err_msg
             
-            msg = response.choices[0].message
-            full_messages.append(msg.model_dump())
+            tool_calls_dict = {}
+            collected_content = ""
+            printed_header = False
             
-            if not msg.tool_calls:
-                return msg.content if msg.content else "（代理未返回文本内容）"
-            
-            for tool_call in msg.tool_calls:
-                fn_name = tool_call.function.name
-                try:
-                    fn_args = json.loads(tool_call.function.arguments)
-                except Exception:
-                    fn_args = {}
+            for chunk in stream:
+                if not chunk.choices:
+                    continue
+                delta = chunk.choices[0].delta
                 
-                print(f" -> [Agent 调用工具]: {fn_name}({fn_args})")
-                tool_res = self._execute_tool(fn_name, fn_args)
+                # 文本流式打字机输出
+                if delta.content:
+                    if not printed_header:
+                        print("\n[Agent 诊断回复]:\n", end="", flush=True)
+                        printed_header = True
+                    print(delta.content, end="", flush=True)
+                    collected_content += delta.content
                 
+                # 工具调用分片解析与重组
+                if delta.tool_calls:
+                    for tc_delta in delta.tool_calls:
+                        idx = tc_delta.index
+                        if idx not in tool_calls_dict:
+                            tool_calls_dict[idx] = {
+                                "id": tc_delta.id or "",
+                                "type": "function",
+                                "function": {
+                                    "name": (tc_delta.function.name or "") if tc_delta.function else "",
+                                    "arguments": (tc_delta.function.arguments or "") if tc_delta.function else ""
+                                }
+                            }
+                        else:
+                            if tc_delta.id:
+                                tool_calls_dict[idx]["id"] += tc_delta.id
+                            if tc_delta.function:
+                                if tc_delta.function.name:
+                                    tool_calls_dict[idx]["function"]["name"] += tc_delta.function.name
+                                if tc_delta.function.arguments:
+                                    tool_calls_dict[idx]["function"]["arguments"] += tc_delta.function.arguments
+
+            if printed_header:
+                print()
+
+            # 触发了工具调用时
+            if tool_calls_dict:
+                tool_calls_list = [tool_calls_dict[i] for i in sorted(tool_calls_dict.keys())]
                 full_messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "content": str(tool_res)
+                    "role": "assistant",
+                    "content": collected_content if collected_content else None,
+                    "tool_calls": tool_calls_list
                 })
-        return "Tool Calling 达到轮次上限，强制中断循环。"
+                
+                for tc in tool_calls_list:
+                    fn_name = tc["function"]["name"]
+                    try:
+                        fn_args = json.loads(tc["function"]["arguments"])
+                    except Exception:
+                        fn_args = {}
+                    
+                    print(f"\n -> [Agent 调用工具]: {fn_name}({fn_args})")
+                    tool_res = self._execute_tool(fn_name, fn_args)
+                    
+                    full_messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc["id"],
+                        "content": str(tool_res)
+                    })
+            else:
+                # 最终回复已通过流式输出完成
+                return collected_content if collected_content else "（代理未返回文本内容）"
+
+        # 达到轮次上限时的流式兜底总结
+        print("\n[*] 工具调用轮次已达上限，正在为您生成综合诊断总结...")
+        full_messages.append({
+            "role": "user",
+            "content": "请根据上面已收集到的所有系统检查、事件日志与工具返回结果，直接给出完整的排查诊断结论与修复方案。"
+        })
+        try:
+            stream = self.client.chat.completions.create(
+                model=MODEL,
+                messages=full_messages,
+                stream=True
+            )
+            print("\n[Agent 诊断总结]:\n", end="", flush=True)
+            summary_content = ""
+            for chunk in stream:
+                if chunk.choices and chunk.choices[0].delta.content:
+                    txt = chunk.choices[0].delta.content
+                    print(txt, end="", flush=True)
+                    summary_content += txt
+            print()
+            return summary_content or "（诊断结束）"
+        except Exception as e:
+            err_msg = f"诊断轮次达到上限，生成总结时异常: {str(e)}"
+            print(f"\n{err_msg}")
+            return err_msg
 
     def _execute_tool(self, name: str, args: Dict[str, Any]) -> str:
-        if name == "get_processes":
-            return sys_tools.get_processes(**args)
-        elif name == "get_services":
-            return sys_tools.get_services(**args)
-        elif name == "get_disk_memory":
-            return sys_tools.get_disk_memory()
-        elif name == "get_event_errors":
-            return sys_tools.get_event_errors(**args)
-        elif name == "test_network":
-            return sys_tools.test_network(**args)
-        elif name == "read_file":
-            return sys_tools.read_file(**args)
-        elif name == "write_report":
-            return sys_tools.write_report(**args)
-        elif name == "run_powershell":
-            return shell_tools.run_powershell(**args)
-        elif name == "run_script":
-            return shell_tools.run_script(**args)
-        else:
-            return f"未知工具名称: {name}"
+        try:
+            if not isinstance(args, dict):
+                args = {}
+            if name == "get_processes":
+                return sys_tools.get_processes(**args)
+            elif name == "get_services":
+                return sys_tools.get_services(**args)
+            elif name == "get_disk_memory":
+                return sys_tools.get_disk_memory()
+            elif name == "get_event_errors":
+                return sys_tools.get_event_errors(**args)
+            elif name == "test_network":
+                return sys_tools.test_network(**args)
+            elif name == "read_file":
+                return sys_tools.read_file(**args)
+            elif name == "write_report":
+                return sys_tools.write_report(**args)
+            elif name == "run_powershell":
+                return shell_tools.run_powershell(**args)
+            elif name == "run_script":
+                return shell_tools.run_script(**args)
+            else:
+                return f"未知工具名称: {name}"
+        except Exception as e:
+            return f"[工具执行异常 ({name})]: {str(e)}"
