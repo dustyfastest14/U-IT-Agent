@@ -1,5 +1,6 @@
 import sys
 import os
+import re
 from pathlib import Path
 
 # Ensure project root is in sys.path
@@ -19,6 +20,14 @@ def print_banner():
     print(f"      Model Name : {MODEL}")
     print("      输入 /help 查看指令 | 输入 /quit 退出对话")
     print("=" * 60)
+
+def extract_tags(text: str) -> list:
+    tags = []
+    keywords = ["死机", "蓝屏", "关机", "重启", "卡顿", "网络", "DNS", "内存", "CPU", "磁盘", "Kernel-Power", "驱动", "微信", "服务"]
+    for kw in keywords:
+        if kw.lower() in text.lower():
+            tags.append(kw)
+    return tags
 
 def main():
     if not API_KEY or API_KEY == "your_actual_api_key_here":
@@ -49,7 +58,7 @@ def main():
         elif user_input.lower() == '/help':
             print("\n[帮助菜单]")
             print("  /skills        - 列出已发现和安装的技能包")
-            print("  /memory        - 查看当前主机记忆摘要")
+            print("  /memory        - 查看当前主机的档案信息与历史诊断记录")
             print("  /install <path>- 安装本地文件夹或 Zip 格式技能包")
             print("  /clear         - 清空当前对话上下文")
             print("  /quit          - 退出助手\n")
@@ -64,7 +73,7 @@ def main():
             print()
             continue
         elif user_input.lower() == '/memory':
-            print(f"\n[记忆状态]: {memory_mgr.get_summary()}\n")
+            print(f"\n[本机记忆与档案状态]:\n{memory_mgr.get_summary()}\n")
             continue
         elif user_input.lower().startswith('/install '):
             target_path = user_input[9:].strip()
@@ -79,8 +88,20 @@ def main():
         messages.append({"role": "user", "content": user_input})
         
         print("\nAgent 正在诊断排查中...")
-        reply = engine.chat_loop(messages)
+        reply, tool_logs = engine.chat_loop(messages)
         messages.append({"role": "assistant", "content": reply})
+        
+        # 自动将诊断会话归档至本机档案与 logs/ 目录
+        if reply and not reply.startswith("[API 调用异常]"):
+            auto_tags = extract_tags(user_input + " " + reply)
+            tool_summary = ", ".join(tool_logs) if tool_logs else "直接分析"
+            arch_res = memory_mgr.record_episode(
+                user_symptom=user_input,
+                tool_summary=tool_summary,
+                diagnosis_conclusion=reply,
+                tags=auto_tags
+            )
+            print(f"\n[✓ 诊断记录已自动归档至本机档案 memory/machines/{memory_mgr.machine_id}.json 与 logs/ 目录]")
 
 if __name__ == '__main__':
     main()
