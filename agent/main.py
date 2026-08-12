@@ -80,8 +80,6 @@ def main():
         
         print("\nAgent 正在诊断排查中...")
         reply = engine.chat_loop(messages)
-        print(f"\n[Agent 诊断回复]:\n{reply}")
-        
         messages.append({"role": "assistant", "content": reply})
 
 if __name__ == '__main__':
