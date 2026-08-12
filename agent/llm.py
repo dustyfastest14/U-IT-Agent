@@ -1,5 +1,6 @@
 import json
 import sys
+import re
 from pathlib import Path
 from typing import List, Dict, Any
 from openai import OpenAI
@@ -13,8 +14,21 @@ TOOLS_SCHEMA = [
     {
         "type": "function",
         "function": {
+            "name": "get_crash_records",
+            "description": "专用死机与崩溃排查工具：获取系统历史死机/强制关机(Kernel-Power 41)、意外关机(6008)、蓝屏BugCheck(1001)事件及DMP转储文件 (只读自动放行)",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "max_count": {"type": "integer", "description": "获取最多事件条数，默认 20"}
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "get_processes",
-            "description": "获取系统当前运行的进程列表及 CPU/内存占用 (只读免确认)",
+            "description": "获取系统当前运行的进程列表及 CPU/内存占用 (只读自动放行)",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -27,7 +41,7 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "get_services",
-            "description": "获取 Windows 系统服务状态列表 (只读免确认)",
+            "description": "获取 Windows 系统服务状态列表 (只读自动放行)",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -40,7 +54,7 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "get_disk_memory",
-            "description": "获取磁盘各分区剩余空间及系统物理内存使用率 (只读免确认)",
+            "description": "获取磁盘各分区剩余空间及系统物理内存使用率 (只读自动放行)",
             "parameters": {"type": "object", "properties": {}}
         }
     },
@@ -48,7 +62,7 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "get_event_errors",
-            "description": "获取最近 N 小时内的系统与应用 Error/Critical 级别错误事件日志 (只读免确认)",
+            "description": "获取最近 N 小时内的系统与应用 Error/Critical 级别错误事件日志 (只读自动放行)",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -61,7 +75,7 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "get_machine_history",
-            "description": "查询当前设备过去发生过的故障诊断历史记录与修复摘要 (只读免确认)",
+            "description": "查询当前设备过去发生过的故障诊断历史记录与修复摘要 (只读自动放行)",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -74,7 +88,7 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "test_network",
-            "description": "测试 Ping / 网络节点连通性 (只读免确认)",
+            "description": "测试 Ping / 网络节点连通性 (只读自动放行)",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -116,7 +130,7 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "read_file",
-            "description": "读取特定配置文件或日志文件 (只读免确认)",
+            "description": "读取特定配置文件或日志文件 (只读自动放行)",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -160,6 +174,16 @@ class LLMEngine:
         full_sys = f"{self.base_sys_prompt}\n\n# 长期记忆与环境上下文\n{mem_summary}\n\n# 已可用技能 Skill 列表\n{skills_summary}"
         return full_sys
 
+    def _clean_tool_preview(self, text: str) -> str:
+        """格式化工具返回内容，避免只打印 [ 这种视觉误导"""
+        lines = [line.strip() for line in text.splitlines() if line.strip() and line.strip() not in ('[', '{', ']', '}')]
+        if not lines:
+            return "成功执行（返回空集或无匹配）"
+        first = lines[0]
+        if len(first) > 90:
+            first = first[:90] + "..."
+        return first
+
     def chat_loop(self, messages: List[Dict[str, Any]]) -> (str, list):
         sys_content = self._build_system_context()
         full_messages = [{"role": "system", "content": sys_content}] + messages
@@ -188,7 +212,7 @@ class LLMEngine:
                     continue
                 delta = chunk.choices[0].delta
                 
-                # 文本流式输出
+                # 文本流式打字机输出
                 if delta.content:
                     if not printed_header:
                         print("\n[Agent 诊断回复]:\n", end="", flush=True)
@@ -221,30 +245,41 @@ class LLMEngine:
             if printed_header:
                 print()
 
-            # 触发了工具调用
+            # ----------------------------------------------------
+            # 关键过滤：清洗丢弃中转站产生的 Ghost/残缺空 Tool Call
+            # ----------------------------------------------------
+            valid_tool_calls = []
             if tool_calls_dict:
-                tool_calls_list = [tool_calls_dict[i] for i in sorted(tool_calls_dict.keys())]
+                for idx in sorted(tool_calls_dict.keys()):
+                    tc = tool_calls_dict[idx]
+                    fn_name = tc.get("function", {}).get("name", "").strip()
+                    # 必须具备合法的函数名称才视为有效调用
+                    if fn_name:
+                        if not tc.get("id"):
+                            tc["id"] = f"call_{idx}_{round_idx}"
+                        valid_tool_calls.append(tc)
+
+            # 如果存在合法工具调用
+            if valid_tool_calls:
                 full_messages.append({
                     "role": "assistant",
                     "content": collected_content if collected_content else None,
-                    "tool_calls": tool_calls_list
+                    "tool_calls": valid_tool_calls
                 })
                 
-                for tc in tool_calls_list:
+                for tc in valid_tool_calls:
                     fn_name = tc["function"]["name"]
+                    raw_args = tc["function"]["arguments"]
                     try:
-                        fn_args = json.loads(tc["function"]["arguments"])
+                        fn_args = json.loads(raw_args) if raw_args.strip() else {}
                     except Exception:
                         fn_args = {}
                     
                     print(f"\n -> [Agent 调用工具]: {fn_name}({fn_args})")
                     tool_res = self._execute_tool(fn_name, fn_args)
                     
-                    # 打印工具执行状态摘要
-                    res_preview = tool_res.strip().splitlines()[0] if tool_res.strip() else "无返回内容"
-                    if len(res_preview) > 80:
-                        res_preview = res_preview[:80] + "..."
-                    print(f"    └─ [工具返回]: {res_preview}")
+                    preview = self._clean_tool_preview(str(tool_res))
+                    print(f"    └─ [工具返回]: {preview}")
                     
                     executed_tools_log.append(f"{fn_name}({fn_args})")
                     
@@ -286,7 +321,9 @@ class LLMEngine:
         try:
             if not isinstance(args, dict):
                 args = {}
-            if name == "get_processes":
+            if name == "get_crash_records":
+                return sys_tools.get_crash_records(**args)
+            elif name == "get_processes":
                 return sys_tools.get_processes(**args)
             elif name == "get_services":
                 return sys_tools.get_services(**args)
