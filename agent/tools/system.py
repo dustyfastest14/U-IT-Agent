@@ -67,13 +67,29 @@ def get_disk_memory() -> str:
             "UsedPercent": f"{stat.dwMemoryLoad}%"
         }
         
-        return f"--- 磁盘信息 ---\n{json.dumps(drives_info, ensure_ascii=False, indent=2)}\n\n--- 内存信息 ---\n{json.dumps(mem_info, ensure_ascii=False, indent=2)}"
+        return f"--- 磁盘分区容量 ---\n{json.dumps(drives_info, ensure_ascii=False, indent=2)}\n\n--- 物理内存状态 ---\n{json.dumps(mem_info, ensure_ascii=False, indent=2)}"
     except Exception as e:
         return f"获取磁盘/内存失败: {str(e)}"
 
+def get_crash_records(max_count: int = 20) -> str:
+    """专用死机、异常关机与蓝屏转储排查工具"""
+    try:
+        cmd_events = f"Get-WinEvent -FilterHashtable @{{LogName='System'; ID=41,6008,1001,1074}} -MaxEvents {max_count} -ErrorAction SilentlyContinue | Select-Object TimeCreated, Id, ProviderName, Message | ConvertTo-Json -Depth 2"
+        res_evt = subprocess.run(["powershell", "-NoProfile", "-Command", cmd_events], capture_output=True, text=True, encoding="utf-8", errors="ignore")
+        
+        cmd_dmp = "Get-ChildItem -Path C:\\Windows\\MEMORY.DMP, C:\\Windows\\Minidump\\*.dmp -ErrorAction SilentlyContinue | Select-Object FullName, Length, LastWriteTime | ConvertTo-Json"
+        res_dmp = subprocess.run(["powershell", "-NoProfile", "-Command", cmd_dmp], capture_output=True, text=True, encoding="utf-8", errors="ignore")
+        
+        events_str = res_evt.stdout.strip() if res_evt.stdout.strip() else "未发现异常死机或蓝屏事件记录。"
+        dmp_str = res_dmp.stdout.strip() if res_dmp.stdout.strip() else "未发现内存转储文件 (.dmp)。"
+        
+        return f"--- 关键死机/异常关机/蓝屏事件 (Kernel-Power 41 / Event 6008 / BugCheck 1001) ---\n{events_str}\n\n--- 系统崩溃转储 Dump 文件 ---\n{dmp_str}"
+    except Exception as e:
+        return f"获取死机崩溃记录失败: {str(e)}"
+
 def get_event_errors(hours: int = 24) -> str:
     try:
-        cmd = f"Get-WinEvent -FilterHashtable @{{LogName='System','Application'; Level=1,2; StartTime=(Get-Date).AddHours(-{hours})}} -MaxEvents 20 -ErrorAction SilentlyContinue | Select-Object TimeCreated, LogName, ProviderName, Id, Message | ConvertTo-Json"
+        cmd = f"Get-WinEvent -FilterHashtable @{{LogName='System','Application'; Level=1,2; StartTime=(Get-Date).AddHours(-{hours})}} -MaxEvents 30 -ErrorAction SilentlyContinue | Select-Object TimeCreated, LogName, ProviderName, Id, Message | ConvertTo-Json"
         res = subprocess.run(["powershell", "-NoProfile", "-Command", cmd], capture_output=True, text=True, encoding='utf-8', errors='ignore')
         return res.stdout if res.stdout.strip() else "未发现指定时间段内的 Error/Critical 级别错误事件。"
     except Exception as e:
