@@ -14,11 +14,11 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "get_processes",
-            "description": "获取系统当前运行的进程列表及 CPU/内存占用",
+            "description": "获取系统当前运行的进程列表及 CPU/内存占用 (只读免确认)",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "filter_name": {"type": "string", "description": "筛选进程关键词"}
+                    "filter_name": {"type": "string", "description": "筛选进程关键词，如 chrome, python"}
                 }
             }
         }
@@ -27,11 +27,11 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "get_services",
-            "description": "获取 Windows 系统服务状态列表",
+            "description": "获取 Windows 系统服务状态列表 (只读免确认)",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "filter_name": {"type": "string", "description": "筛选服务关键词"}
+                    "filter_name": {"type": "string", "description": "筛选服务关键词，如 wuauserv"}
                 }
             }
         }
@@ -40,7 +40,7 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "get_disk_memory",
-            "description": "获取磁盘各分区剩余空间及系统物理内存使用率",
+            "description": "获取磁盘各分区剩余空间及系统物理内存使用率 (只读免确认)",
             "parameters": {"type": "object", "properties": {}}
         }
     },
@@ -48,7 +48,7 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "get_event_errors",
-            "description": "获取最近 N 小时内的系统与应用 Error/Critical 错误日志",
+            "description": "获取最近 N 小时内的系统与应用 Error/Critical 级别错误事件日志 (只读免确认)",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -60,8 +60,21 @@ TOOLS_SCHEMA = [
     {
         "type": "function",
         "function": {
+            "name": "get_machine_history",
+            "description": "查询当前设备过去发生过的故障诊断历史记录与修复摘要 (只读免确认)",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "keyword": {"type": "string", "description": "搜索关键词，如 死机, 关机, 网络"}
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "test_network",
-            "description": "测试 Ping / 网络节点连通性",
+            "description": "测试 Ping / 网络节点连通性 (只读免确认)",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -103,7 +116,7 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "read_file",
-            "description": "读取特定配置文件或日志文件",
+            "description": "读取特定配置文件或日志文件 (只读免确认)",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -132,7 +145,7 @@ TOOLS_SCHEMA = [
 
 class LLMEngine:
     def __init__(self, memory_mgr: MemoryManager, skill_mgr: SkillManager):
-        self.client = OpenAI(base_url=API_BASE, api_key=API_KEY or 'none')
+        self.client = OpenAI(base_url=API_BASE, api_key=API_KEY or "none")
         self.memory_mgr = memory_mgr
         self.skill_mgr = skill_mgr
         
@@ -147,9 +160,10 @@ class LLMEngine:
         full_sys = f"{self.base_sys_prompt}\n\n# 长期记忆与环境上下文\n{mem_summary}\n\n# 已可用技能 Skill 列表\n{skills_summary}"
         return full_sys
 
-    def chat_loop(self, messages: List[Dict[str, Any]]) -> str:
+    def chat_loop(self, messages: List[Dict[str, Any]]) -> (str, list):
         sys_content = self._build_system_context()
         full_messages = [{"role": "system", "content": sys_content}] + messages
+        executed_tools_log = []
         
         for round_idx in range(MAX_TOOL_ROUNDS):
             try:
@@ -163,7 +177,7 @@ class LLMEngine:
             except Exception as e:
                 err_msg = f"[API 调用异常]: {str(e)}"
                 print(f"\n{err_msg}")
-                return err_msg
+                return err_msg, executed_tools_log
             
             tool_calls_dict = {}
             collected_content = ""
@@ -174,7 +188,7 @@ class LLMEngine:
                     continue
                 delta = chunk.choices[0].delta
                 
-                # 文本流式打字机输出
+                # 文本流式输出
                 if delta.content:
                     if not printed_header:
                         print("\n[Agent 诊断回复]:\n", end="", flush=True)
@@ -182,7 +196,7 @@ class LLMEngine:
                     print(delta.content, end="", flush=True)
                     collected_content += delta.content
                 
-                # 工具调用分片解析与重组
+                # 工具调用分片重组
                 if delta.tool_calls:
                     for tc_delta in delta.tool_calls:
                         idx = tc_delta.index
@@ -207,7 +221,7 @@ class LLMEngine:
             if printed_header:
                 print()
 
-            # 触发了工具调用时
+            # 触发了工具调用
             if tool_calls_dict:
                 tool_calls_list = [tool_calls_dict[i] for i in sorted(tool_calls_dict.keys())]
                 full_messages.append({
@@ -226,16 +240,23 @@ class LLMEngine:
                     print(f"\n -> [Agent 调用工具]: {fn_name}({fn_args})")
                     tool_res = self._execute_tool(fn_name, fn_args)
                     
+                    # 打印工具执行状态摘要
+                    res_preview = tool_res.strip().splitlines()[0] if tool_res.strip() else "无返回内容"
+                    if len(res_preview) > 80:
+                        res_preview = res_preview[:80] + "..."
+                    print(f"    └─ [工具返回]: {res_preview}")
+                    
+                    executed_tools_log.append(f"{fn_name}({fn_args})")
+                    
                     full_messages.append({
                         "role": "tool",
                         "tool_call_id": tc["id"],
                         "content": str(tool_res)
                     })
             else:
-                # 最终回复已通过流式输出完成
-                return collected_content if collected_content else "（代理未返回文本内容）"
+                return collected_content if collected_content else "（代理未返回文本内容）", executed_tools_log
 
-        # 达到轮次上限时的流式兜底总结
+        # 达到轮次上限时的兜底总结
         print("\n[*] 工具调用轮次已达上限，正在为您生成综合诊断总结...")
         full_messages.append({
             "role": "user",
@@ -255,11 +276,11 @@ class LLMEngine:
                     print(txt, end="", flush=True)
                     summary_content += txt
             print()
-            return summary_content or "（诊断结束）"
+            return summary_content or "（诊断结束）", executed_tools_log
         except Exception as e:
             err_msg = f"诊断轮次达到上限，生成总结时异常: {str(e)}"
             print(f"\n{err_msg}")
-            return err_msg
+            return err_msg, executed_tools_log
 
     def _execute_tool(self, name: str, args: Dict[str, Any]) -> str:
         try:
@@ -273,6 +294,8 @@ class LLMEngine:
                 return sys_tools.get_disk_memory()
             elif name == "get_event_errors":
                 return sys_tools.get_event_errors(**args)
+            elif name == "get_machine_history":
+                return self.memory_mgr.search_machine_history(**args)
             elif name == "test_network":
                 return sys_tools.test_network(**args)
             elif name == "read_file":
