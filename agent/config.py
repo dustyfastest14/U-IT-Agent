@@ -9,6 +9,7 @@ API_BASE = os.getenv('API_BASE', 'https://api.openai.com/v1')
 API_KEY = os.getenv('API_KEY', '')
 MODEL = os.getenv('MODEL', 'gpt-4o')
 CONFIRM_MODE = os.getenv('CONFIRM_MODE', 'true').lower() == 'true'
+MAX_TOOL_ROUNDS = int(os.getenv('MAX_TOOL_ROUNDS', '15'))
 
 SKILLS_DIR = BASE_DIR / 'skills'
 SCRIPTS_DIR = BASE_DIR / 'scripts'
