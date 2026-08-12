@@ -9,7 +9,8 @@ MODIFY_PATTERNS = [
     r'\brename-', r'\bmove-', r'\bcopy-', r'\badd-', r'\binstall-',
     r'\buninstall-', r'\bupdate-', r'\binvoke-', r'\bdel\b', r'\brm\b',
     r'\brmdir\b', r'\breg\s+(add|delete)', r'\bnetsh\s+.*(set|add|delete)',
-    r'\bsc(\.exe)?\s+(stop|start|config|delete|create)', r'>>', r'\bformat\b'
+    r'\bsc(\.exe)?\s+(stop|start|config|delete|create)', r'>>',
+    r'\bformat\s+[a-zA-Z]:'
 ]
 
 def is_cmd_safe(cmd: str) -> bool:
@@ -26,7 +27,10 @@ def is_query_only_cmd(cmd: str) -> bool:
             return False
     return True
 
-def run_powershell(command: str) -> str:
+def run_powershell(command: str = '') -> str:
+    if not command:
+        return "[参数错误] run_powershell 缺少必要参数 command，请提供需执行的 PowerShell 命令。"
+    
     if not is_cmd_safe(command):
         return f"[安全拦截] 命令包含禁止的高危操作指令，拒绝执行: {command}"
     
@@ -45,9 +49,11 @@ def run_powershell(command: str) -> str:
     except Exception as e:
         return f"PowerShell 执行异常: {str(e)}"
 
-def run_script(script_name: str, args: str = '') -> str:
-    target_script = None
+def run_script(script_name: str = '', args: str = '') -> str:
+    if not script_name:
+        return "[参数错误] run_script 缺少必要参数 script_name。"
     
+    target_script = None
     script_in_global = SCRIPTS_DIR / script_name
     if script_in_global.exists():
         target_script = script_in_global
