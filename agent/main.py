@@ -1,6 +1,7 @@
 import sys
 import os
 import re
+import platform
 from pathlib import Path
 
 # Ensure project root is in sys.path
@@ -15,7 +16,8 @@ from agent.config import API_KEY, API_BASE, MODEL
 
 def print_banner():
     print("=" * 60)
-    print("      U-IT-Agent (Windows 便携 AI 诊断助手 MVP)")
+    print("      U-IT-Agent (Windows / Linux AI 运维诊断助手)")
+    print(f"      当前系统 : {platform.system()} {platform.release()}")
     print(f"      API Gateway: {API_BASE}")
     print(f"      Model Name : {MODEL}")
     print("      输入 /help 查看指令 | 输入 /quit 退出对话")
@@ -23,7 +25,7 @@ def print_banner():
 
 def extract_tags(text: str) -> list:
     tags = []
-    keywords = ["死机", "蓝屏", "关机", "重启", "卡顿", "网络", "DNS", "内存", "CPU", "磁盘", "Kernel-Power", "驱动", "微信", "服务"]
+    keywords = ["死机", "蓝屏", "关机", "重启", "卡顿", "网络", "DNS", "内存", "CPU", "磁盘", "Kernel-Power", "驱动", "服务", "OOM", "panic", "journalctl", "systemd", "内核"]
     for kw in keywords:
         if kw.lower() in text.lower():
             tags.append(kw)
@@ -69,7 +71,7 @@ def main():
             if not skills:
                 print("  暂无安装的 Skill。")
             for s in skills:
-                print(f"  - {s['name']}: {s['description']}")
+                print(f"  - {s['name']} [{', '.join(s['platforms'])}]: {s['description']}")
             print()
             continue
         elif user_input.lower() == '/memory':

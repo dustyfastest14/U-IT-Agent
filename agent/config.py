@@ -17,4 +17,14 @@ MEMORY_DIR = BASE_DIR / 'memory'
 WORKSPACE_DIR = BASE_DIR / 'workspace'
 LOGS_DIR = BASE_DIR / 'logs'
 
-FORBIDDEN_KEYWORDS = ['format ', 'rmdir /s /q c:', 'del /f /s /q c:', 'remove-item -recurse -force c:']
+for d in [SKILLS_DIR, SCRIPTS_DIR, MEMORY_DIR, WORKSPACE_DIR, LOGS_DIR] + [MEMORY_DIR / x for x in ['machines', 'episodes', 'knowledge']]:
+    d.mkdir(parents=True, exist_ok=True)
+
+FORBIDDEN_KEYWORDS = [
+    # Windows 高危破坏性指令
+    'format ', 'rmdir /s /q c:', 'del /f /s /q c:', 'remove-item -recurse -force c:',
+    # Linux 高危破坏性指令
+    'rm -rf /', 'rm -fr /', 'rm -rf /:', 'rm -fr /*', 'mkfs', 'dd if=',
+    ':(){ :|:& };:', '> /dev/sda', '> /dev/nvme', '> /dev/vda', 'chmod -R 777 /',
+    'shutdown -h now', 'init 0', 'poweroff', 'mkfs.ext4', 'mkfs.xfs'
+]

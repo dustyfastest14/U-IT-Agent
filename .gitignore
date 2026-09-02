@@ -1,7 +1,13 @@
 .env
 workspace/*
 logs/*
+memory/machines/*
+memory/episodes/*
+memory/knowledge/*
 __pycache__/*
 *.pyc
 !workspace/.gitkeep
 !logs/.gitkeep
+!memory/machines/.gitkeep
+!memory/episodes/.gitkeep
+!memory/knowledge/.gitkeep

@@ -1,4 +1,5 @@
 import json
+import platform
 import sys
 import re
 from pathlib import Path
@@ -15,11 +16,11 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "get_crash_records",
-            "description": "专用死机与崩溃排查工具：获取系统历史死机/强制关机(Kernel-Power 41)、意外关机(6008)、蓝屏BugCheck(1001)事件及DMP转储文件 (只读自动放行)",
+            "description": "获取 Windows 蓝屏/转储或 Linux 内核 Panic、OOM、崩溃记录（只读自动放行）",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "max_count": {"type": "integer", "description": "获取最多事件条数，默认 20"}
+                    "limit": {"type": "integer", "description": "获取最多事件条数，默认 20"}
                 }
             }
         }
@@ -32,7 +33,7 @@ TOOLS_SCHEMA = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "filter_name": {"type": "string", "description": "筛选进程关键词，如 chrome, python"}
+                    "limit": {"type": "integer", "description": "返回进程条数，默认 25"}
                 }
             }
         }
@@ -41,11 +42,11 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "get_services",
-            "description": "获取 Windows 系统服务状态列表 (只读自动放行)",
+            "description": "获取 Windows 或 Linux 系统服务状态列表（只读自动放行）",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "filter_name": {"type": "string", "description": "筛选服务关键词，如 wuauserv"}
+                    "limit": {"type": "integer", "description": "返回服务条数，默认 30"}
                 }
             }
         }
@@ -100,12 +101,13 @@ TOOLS_SCHEMA = [
     {
         "type": "function",
         "function": {
-            "name": "run_powershell",
-            "description": "安全执行单条 PowerShell 诊断或修复命令（只读查询类命令自动放行，修改类操作提示用户确认）",
+            "name": "run_command",
+            "description": "安全执行单条诊断或修复命令；Windows 使用 PowerShell，Linux 使用 Bash，只读查询自动放行、修改操作要求确认",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "command": {"type": "string", "description": "PowerShell 命令"}
+                    "command": {"type": "string", "description": "当前平台的命令"},
+                    "timeout": {"type": "integer", "description": "超时秒数，默认 60，最大 300"}
                 },
                 "required": ["command"]
             }
@@ -134,9 +136,10 @@ TOOLS_SCHEMA = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "文件绝对或相对路径"}
+                    "file_path": {"type": "string", "description": "文件绝对或相对路径"},
+                    "max_lines": {"type": "integer", "description": "最大读取行数，默认 100"}
                 },
-                "required": ["path"]
+                "required": ["file_path"]
             }
         }
     },
@@ -148,10 +151,10 @@ TOOLS_SCHEMA = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "filename": {"type": "string", "description": "报告文件名，如 report-net.md"},
+                    "title": {"type": "string", "description": "报告标题"},
                     "content": {"type": "string", "description": " Markdown 报告正文内容"}
                 },
-                "required": ["filename", "content"]
+                "required": ["title", "content"]
             }
         }
     }
@@ -171,7 +174,8 @@ class LLMEngine:
         skills = self.skill_mgr.scan_skills()
         skills_summary = "\n".join([f"- {s['name']}: {s['description']}" for s in skills]) if skills else "暂未加载特定 Skill。"
         
-        full_sys = f"{self.base_sys_prompt}\n\n# 长期记忆与环境上下文\n{mem_summary}\n\n# 已可用技能 Skill 列表\n{skills_summary}"
+        platform_info = f"当前宿主平台: {platform.system()} {platform.release()} ({platform.machine()})"
+        full_sys = f"{self.base_sys_prompt}\n\n# 运行环境\n{platform_info}\n\n# 长期记忆与环境上下文\n{mem_summary}\n\n# 已可用技能 Skill 列表\n{skills_summary}"
         return full_sys
 
     def _clean_tool_preview(self, text: str) -> str:
@@ -184,9 +188,17 @@ class LLMEngine:
             first = first[:90] + "..."
         return first
 
+    @staticmethod
+    def _normalize_history(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """确保 Gemini 兼容渠道收到的最后一条上下文不是 assistant 消息。"""
+        normalized = list(messages)
+        while normalized and normalized[-1].get("role") == "assistant":
+            normalized.pop()
+        return normalized
+
     def chat_loop(self, messages: List[Dict[str, Any]]) -> (str, list):
         sys_content = self._build_system_context()
-        full_messages = [{"role": "system", "content": sys_content}] + messages
+        full_messages = [{"role": "system", "content": sys_content}] + self._normalize_history(messages)
         executed_tools_log = []
         
         for round_idx in range(MAX_TOOL_ROUNDS):
@@ -339,8 +351,8 @@ class LLMEngine:
                 return sys_tools.read_file(**args)
             elif name == "write_report":
                 return sys_tools.write_report(**args)
-            elif name == "run_powershell":
-                return shell_tools.run_powershell(**args)
+            elif name == "run_command":
+                return shell_tools.run_command(**args)
             elif name == "run_script":
                 return shell_tools.run_script(**args)
             else:

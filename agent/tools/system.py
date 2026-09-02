@@ -1,126 +1,183 @@
-import subprocess
-import json
 import os
-import shutil
-import ctypes
+import platform
+import subprocess
+import datetime
 from pathlib import Path
-from agent.config import WORKSPACE_DIR
+from agent.config import WORKSPACE_DIR, LOGS_DIR, MEMORY_DIR
 
-def get_processes(filter_name: str = '') -> str:
-    try:
-        if filter_name:
-            cmd = f"Get-Process -Name '*{filter_name}*' -ErrorAction SilentlyContinue | Select-Object -First 30 Id, ProcessName, CPU, WorkingSet | ConvertTo-Json"
-        else:
-            cmd = "Get-Process -ErrorAction SilentlyContinue | Sort-Object -Descending CPU, WorkingSet | Select-Object -First 30 Id, ProcessName, CPU, WorkingSet | ConvertTo-Json"
-        res = subprocess.run(["powershell", "-NoProfile", "-Command", cmd], capture_output=True, text=True, encoding='utf-8', errors='ignore')
-        return res.stdout if res.stdout.strip() else "未找到匹配进程。"
-    except Exception as e:
-        return f"获取进程失败: {str(e)}"
+IS_WINDOWS = platform.system() == 'Windows'
+IS_LINUX = platform.system() == 'Linux'
 
-def get_services(filter_name: str = '') -> str:
+def _run_cmd(cmd: str, timeout: int = 30) -> str:
     try:
-        if filter_name:
-            cmd = f"Get-Service -Name '*{filter_name}*' -ErrorAction SilentlyContinue | Select-Object -First 30 Name, DisplayName, Status | ConvertTo-Json"
+        if IS_WINDOWS:
+            full_cmd = ['powershell', '-ExecutionPolicy', 'Bypass', '-NoProfile', '-Command', cmd]
         else:
-            cmd = "Get-Service -ErrorAction SilentlyContinue | Select-Object -First 40 Name, DisplayName, Status | ConvertTo-Json"
-        res = subprocess.run(["powershell", "-NoProfile", "-Command", cmd], capture_output=True, text=True, encoding='utf-8', errors='ignore')
-        return res.stdout if res.stdout.strip() else "未找到匹配服务。"
+            full_cmd = ['bash', '-c', cmd]
+        
+        proc = subprocess.run(
+            full_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout
+        )
+        out = proc.stdout.decode('utf-8', errors='ignore').strip()
+        if not out and proc.stderr:
+            err = proc.stderr.decode('utf-8', errors='ignore').strip()
+            if err:
+                return f"[Stderr]: {err}"
+        return out if out else "(No output)"
+    except subprocess.TimeoutExpired:
+        return f"[Error]: Command timed out after {timeout} seconds."
     except Exception as e:
-        return f"获取服务失败: {str(e)}"
+        return f"[Error]: {str(e)}"
+
+def get_processes(limit: int = 25) -> str:
+    """获取当前系统活跃进程列表（按CPU占用降序）"""
+    if IS_WINDOWS:
+        cmd = 'Get-Process | Sort-Object CPU -Descending | Select-Object -First %d Id, ProcessName, CPU, WorkingSet64, Responding | Format-Table -AutoSize | Out-String -Width 4096' % limit
+    else:
+        cmd = 'ps -eo pid,ppid,user,%cpu,%mem,stat,comm --sort=-%cpu 2>/dev/null | head -n %d' % (limit + 1)
+    return _run_cmd(cmd)
+
+def get_services(limit: int = 30) -> str:
+    """获取系统关键服务状态"""
+    if IS_WINDOWS:
+        cmd = 'Get-Service | Where-Object {$_.Status -eq "Running" -or $_.StartType -eq "Automatic"} | Select-Object -First %d Name, DisplayName, Status, StartType | Format-Table -AutoSize | Out-String -Width 4096' % limit
+    else:
+        cmd = 'systemctl list-units --type=service --state=running,failed --no-pager --no-legend 2>/dev/null | head -n %d' % limit
+        res = _run_cmd(cmd)
+        if '(No output)' in res or '[Error]' in res:
+            cmd = 'service --status-all 2>&1 | head -n %d' % limit
+            return _run_cmd(cmd)
+        return res
+    return _run_cmd(cmd)
 
 def get_disk_memory() -> str:
-    try:
-        drives_info = []
-        for letter in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ':
-            root = f"{letter}:\\"
-            if os.path.exists(root):
-                try:
-                    total, used, free = shutil.disk_usage(root)
-                    drives_info.append({
-                        "Drive": f"{letter}:",
-                        "TotalGB": round(total / (1024**3), 2),
-                        "FreeGB": round(free / (1024**3), 2),
-                        "UsedPercent": f"{round((used / total) * 100, 1)}%"
-                    })
-                except Exception:
-                    pass
-        
-        class MEMORYSTATUSEX(ctypes.Structure):
-            _fields_ = [
-                ('dwLength', ctypes.c_ulong),
-                ('dwMemoryLoad', ctypes.c_ulong),
-                ('ullTotalPhys', ctypes.c_ulonglong),
-                ('ullAvailPhys', ctypes.c_ulonglong),
-                ('ullTotalPageFile', ctypes.c_ulonglong),
-                ('ullAvailPageFile', ctypes.c_ulonglong),
-                ('ullTotalVirtual', ctypes.c_ulonglong),
-                ('ullAvailVirtual', ctypes.c_ulonglong),
-                ('sullAvailExtendedVirtual', ctypes.c_ulonglong),
-            ]
-        stat = MEMORYSTATUSEX()
-        stat.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
-        ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat))
-        
-        mem_info = {
-            "TotalPhysicalGB": round(stat.ullTotalPhys / (1024**3), 2),
-            "AvailablePhysicalGB": round(stat.ullAvailPhys / (1024**3), 2),
-            "UsedPercent": f"{stat.dwMemoryLoad}%"
-        }
-        
-        return f"--- 磁盘分区容量 ---\n{json.dumps(drives_info, ensure_ascii=False, indent=2)}\n\n--- 物理内存状态 ---\n{json.dumps(mem_info, ensure_ascii=False, indent=2)}"
-    except Exception as e:
-        return f"获取磁盘/内存失败: {str(e)}"
+    """获取磁盘挂载与内存利用率信息"""
+    if IS_WINDOWS:
+        cmd = r'''
+        $disks = Get-PSDrive -PSProvider FileSystem | Select-Object Name, @{N="UsedGB";E={[math]::Round($_.Used/1GB, 2)}}, @{N="FreeGB";E={[math]::Round($_.Free/1GB, 2)}}, @{N="TotalGB";E={[math]::Round(($_.Used+$_.Free)/1GB, 2)}} | Format-Table -AutoSize | Out-String;
+        $os = Get-CimInstance Win32_OperatingSystem;
+        $mem = [PSCustomObject]@{
+            TotalRAM_GB = [math]::Round($os.TotalVisibleMemorySize/1MB, 2);
+            FreeRAM_GB = [math]::Round($os.FreePhysicalMemory/1MB, 2);
+            UsedRAM_GB = [math]::Round(($os.TotalVisibleMemorySize - $os.FreePhysicalMemory)/1MB, 2);
+            UsagePercent = [math]::Round((($os.TotalVisibleMemorySize - $os.FreePhysicalMemory)/$os.TotalVisibleMemorySize)*100, 2)
+        } | Format-Table -AutoSize | Out-String;
+        "=== DISK USAGE ===`n" + $disks + "`n=== MEMORY USAGE ===`n" + $mem
+        '''
+    else:
+        cmd = "echo '=== DISK USAGE ==='; df -h; echo ''; echo '=== MEMORY USAGE ==='; free -h"
+    return _run_cmd(cmd)
 
-def get_crash_records(max_count: int = 20) -> str:
-    """专用死机、异常关机与蓝屏转储排查工具"""
-    try:
-        cmd_events = f"Get-WinEvent -FilterHashtable @{{LogName='System'; ID=41,6008,1001,1074}} -MaxEvents {max_count} -ErrorAction SilentlyContinue | Select-Object TimeCreated, Id, ProviderName, Message | ConvertTo-Json -Depth 2"
-        res_evt = subprocess.run(["powershell", "-NoProfile", "-Command", cmd_events], capture_output=True, text=True, encoding="utf-8", errors="ignore")
-        
-        cmd_dmp = "Get-ChildItem -Path C:\\Windows\\MEMORY.DMP, C:\\Windows\\Minidump\\*.dmp -ErrorAction SilentlyContinue | Select-Object FullName, Length, LastWriteTime | ConvertTo-Json"
-        res_dmp = subprocess.run(["powershell", "-NoProfile", "-Command", cmd_dmp], capture_output=True, text=True, encoding="utf-8", errors="ignore")
-        
-        events_str = res_evt.stdout.strip() if res_evt.stdout.strip() else "未发现异常死机或蓝屏事件记录。"
-        dmp_str = res_dmp.stdout.strip() if res_dmp.stdout.strip() else "未发现内存转储文件 (.dmp)。"
-        
-        return f"--- 关键死机/异常关机/蓝屏事件 (Kernel-Power 41 / Event 6008 / BugCheck 1001) ---\n{events_str}\n\n--- 系统崩溃转储 Dump 文件 ---\n{dmp_str}"
-    except Exception as e:
-        return f"获取死机崩溃记录失败: {str(e)}"
+def get_crash_records(limit: int = 20) -> str:
+    """获取系统崩溃转储记录、蓝屏Dump、内核Panic或OOM记录"""
+    if IS_WINDOWS:
+        cmd = r'''
+        $dumps = Get-ChildItem -Path "C:\Windows\Minidump" -ErrorAction SilentlyContinue | Select-Object Name, Length, LastWriteTime | Format-Table -AutoSize | Out-String;
+        $events = Get-WinEvent -FilterHashtable @{LogName='System'; ProviderName=@('Microsoft-Windows-WER-SystemErrorReporting','BugCheck')} -MaxEvents %d -ErrorAction SilentlyContinue | Select-Object TimeCreated, Id, Message | Format-List | Out-String;
+        "=== MINIDUMP FILES ===`n" + $dumps + "`n=== CRASH EVENTS ===`n" + $events
+        ''' % limit
+    else:
+        cmd = '''
+        echo '=== DMESG CRASH / OOM / PANIC ==='
+        dmesg -T 2>/dev/null | grep -Ei 'oom|killed process|kernel panic|segfault|error|fatal' | tail -n %d
+        echo ''
+        echo '=== /var/crash DIRECTORY ==='
+        ls -la /var/crash 2>/dev/null
+        echo ''
+        echo '=== JOURNALCTL RECENT ERRORS ==='
+        journalctl -p 3 -xb -n %d --no-pager 2>/dev/null
+        ''' % (limit, limit)
+    return _run_cmd(cmd)
 
-def get_event_errors(hours: int = 24) -> str:
-    try:
-        cmd = f"Get-WinEvent -FilterHashtable @{{LogName='System','Application'; Level=1,2; StartTime=(Get-Date).AddHours(-{hours})}} -MaxEvents 30 -ErrorAction SilentlyContinue | Select-Object TimeCreated, LogName, ProviderName, Id, Message | ConvertTo-Json"
-        res = subprocess.run(["powershell", "-NoProfile", "-Command", cmd], capture_output=True, text=True, encoding='utf-8', errors='ignore')
-        return res.stdout if res.stdout.strip() else "未发现指定时间段内的 Error/Critical 级别错误事件。"
-    except Exception as e:
-        return f"获取事件日志失败: {str(e)}"
+def get_event_errors(hours: int = 24, max_events: int = 30) -> str:
+    """获取最近指定时间内的系统严重错误与警告日志"""
+    if IS_WINDOWS:
+        cmd = '''
+        $cutoff = (Get-Date).AddHours(-%d);
+        Get-WinEvent -FilterHashtable @{LogName=@('System','Application'); Level=@(1,2); StartTime=$cutoff} -MaxEvents %d -ErrorAction SilentlyContinue |
+            Select-Object TimeCreated, Id, ProviderName, LevelDisplayName, Message | Format-List | Out-String -Width 4096
+        ''' % (hours, max_events)
+    else:
+        cmd = 'journalctl -p 3 --since "%d hours ago" -n %d --no-pager 2>/dev/null' % (hours, max_events)
+    return _run_cmd(cmd)
 
-def test_network(target: str = 'www.baidu.com') -> str:
-    try:
-        cmd = f"Test-Connection -ComputerName {target} -Count 2 -ErrorAction SilentlyContinue | Select-Object Address, IP4Address, ResponseTime | ConvertTo-Json"
-        res = subprocess.run(["powershell", "-NoProfile", "-Command", cmd], capture_output=True, text=True, encoding='utf-8', errors='ignore')
-        return res.stdout if res.stdout.strip() else f"Ping {target} 测试失败或超时。"
-    except Exception as e:
-        return f"网络测试失败: {str(e)}"
+def test_network(target: str = "www.baidu.com") -> str:
+    """测试网络连通性、延迟与DNS解析"""
+    target = target.strip().split(';')[0].split('&')[0].split('|')[0]
+    if IS_WINDOWS:
+        cmd = '''
+        $dns = Resolve-DnsName -Name "%s" -ErrorAction SilentlyContinue | Select-Object Name, IPAddress | Format-Table -AutoSize | Out-String;
+        $ping = Test-Connection -ComputerName "%s" -Count 4 -ErrorAction SilentlyContinue | Select-Object Address, ResponseTime, Status | Format-Table -AutoSize | Out-String;
+        "=== DNS RESOLUTION ===`n" + $dns + "`n=== PING RESULT ===`n" + $ping
+        ''' % (target, target)
+    else:
+        cmd = '''
+        echo '=== PING TEST ==='
+        ping -c 4 -W 3 "%s" 2>&1
+        echo ''
+        echo '=== HTTP CONNECTIVITY ==='
+        curl -Is --connect-timeout 5 "%s" 2>&1 | head -n 5
+        ''' % (target, target)
+    return _run_cmd(cmd)
 
-def read_file(path: str = '') -> str:
-    if not path:
-        return "[参数错误] 缺少必要参数 path"
+def read_file(file_path: str, max_lines: int = 100) -> str:
+    """安全读取指定文本/e日志文件内容（支持限制行数）"""
     try:
-        p = Path(path)
+        p = Path(file_path).resolve()
         if not p.exists():
-            return f"文件 {path} 不存在。"
-        return p.read_text(encoding='utf-8', errors='ignore')[:4000]
+            return f"[Error]: File not found: {file_path}"
+        if not p.is_file():
+            return f"[Error]: Path is not a file: {file_path}"
+        
+        lines = []
+        with open(p, 'r', encoding='utf-8', errors='ignore') as f:
+            for i, line in enumerate(f):
+                if i >= max_lines:
+                    lines.append(f"... (truncated, total displayed {max_lines} lines)")
+                    break
+                lines.append(line.rstrip('\r\n'))
+        return "\n".join(lines)
     except Exception as e:
-        return f"读取文件失败: {str(e)}"
+        return f"[Error]: Failed to read file: {str(e)}"
 
-def write_report(filename: str = '', content: str = '') -> str:
-    if not filename or not content:
-        return "[参数错误] 缺少必要参数 filename 或 content"
+def write_report(title: str, content: str, format: str = "markdown") -> str:
+    """生成结构化运维诊断与修复报告并保存至工作区"""
     try:
-        WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
-        out_path = WORKSPACE_DIR / filename
-        out_path.write_text(content, encoding='utf-8')
-        return f"诊断报告已写入: {out_path}"
+        safe_title = "".join(c for c in title if c.isalnum() or c in ('-', '_', ' ')).strip().replace(' ', '_')
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{safe_title}_{timestamp}.md"
+        filepath = WORKSPACE_DIR / filename
+        
+        full_content = f"# {title}\n\n- **Generated At**: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n- **Platform**: {platform.system()} ({platform.release()})\n\n---\n\n{content}\n"
+        
+        filepath.write_text(full_content, encoding='utf-8')
+        return f"Report successfully written to: {str(filepath)}"
     except Exception as e:
-        return f"写入报告失败: {str(e)}"
+        return f"[Error]: Failed to write report: {str(e)}"
+
+def get_machine_history() -> str:
+    """读取当前机器的历史画像与过往运维事件记录"""
+    try:
+        hostname = platform.node()
+        machine_file = MEMORY_DIR / 'machines' / f"{hostname}.json"
+        
+        info = []
+        if machine_file.exists():
+            info.append(f"=== MACHINE PROFILE ({hostname}) ===")
+            info.append(machine_file.read_text(encoding='utf-8', errors='ignore'))
+        else:
+            info.append(f"No previous machine profile found for {hostname}.")
+            
+        episodes_dir = MEMORY_DIR / 'episodes'
+        if episodes_dir.exists():
+            ep_files = sorted([f for f in episodes_dir.glob(f"{hostname}_*.json")], key=lambda x: x.stat().st_mtime, reverse=True)
+            if ep_files:
+                info.append(f"\n=== RECENT EPISODES ({len(ep_files)} found) ===")
+                for ep in ep_files[:3]:
+                    info.append(f"--- {ep.name} ---\n" + ep.read_text(encoding='utf-8', errors='ignore'))
+        return "\n".join(info)
+    except Exception as e:
+        return f"[Error]: Failed to retrieve machine history: {str(e)}"

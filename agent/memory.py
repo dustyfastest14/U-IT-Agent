@@ -1,6 +1,8 @@
 import json
-import socket
 import os
+import platform
+import socket
+import subprocess
 from pathlib import Path
 from datetime import datetime
 from agent.config import MEMORY_DIR, LOGS_DIR
@@ -19,17 +21,58 @@ class MemoryManager:
         self.profile_path = self.machines_dir / f"{self.machine_id}.json"
         self._init_profile()
 
+    @staticmethod
+    def _linux_release() -> dict:
+        release_path = Path("/etc/os-release")
+        if not release_path.exists():
+            return {}
+
+        values = {}
+        for line in release_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+            if "=" in line and not line.startswith("#"):
+                key, value = line.split("=", 1)
+                values[key] = value.strip().strip('"')
+        return values
+
+    def _system_info(self) -> dict:
+        system = platform.system()
+        info = {
+            "os": system,
+            "os_release": platform.release(),
+            "os_version": platform.version(),
+            "architecture": platform.machine(),
+            "hostname": self.machine_id,
+        }
+        if system == "Linux":
+            release = self._linux_release()
+            info["distribution"] = release.get("PRETTY_NAME", release.get("NAME", "Linux"))
+            try:
+                info["kernel"] = subprocess.check_output(["uname", "-r"], text=True).strip()
+            except (OSError, subprocess.SubprocessError):
+                info["kernel"] = platform.release()
+        return info
+
     def _init_profile(self):
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         if not self.profile_path.exists():
             data = {
                 "machine_id": self.machine_id,
-                "os": "Windows",
-                "first_seen": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "last_seen": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "system": self._system_info(),
+                "first_seen": now_str,
+                "last_seen": now_str,
                 "history_tags": [],
                 "recent_repairs": []
             }
             self.profile_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
+            return
+
+        try:
+            profile = json.loads(self.profile_path.read_text(encoding="utf-8"))
+            profile["system"] = self._system_info()
+            profile["last_seen"] = now_str
+            self.profile_path.write_text(json.dumps(profile, ensure_ascii=False, indent=2), encoding="utf-8")
+        except (OSError, json.JSONDecodeError):
+            pass
 
     def record_episode(self, user_symptom: str, tool_summary: str, diagnosis_conclusion: str, tags: list = None):
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -96,6 +139,7 @@ class MemoryManager:
             
             summary_parts = [
                 f"当前主机: {self.machine_id}",
+                f"系统: {profile.get('system', {}).get('distribution', profile.get('system', {}).get('os', profile.get('os', '未知')))}",
                 f"设备历史故障标签: {', '.join(profile.get('history_tags', [])) or '暂无'}"
             ]
             

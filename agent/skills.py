@@ -1,4 +1,3 @@
-import os
 import shutil
 import zipfile
 from pathlib import Path
@@ -17,7 +16,8 @@ class SkillManager:
                     skills.append({
                         "name": item.name,
                         "path": str(item),
-                        "description": self._parse_skill_desc(skill_md)
+                        "description": self._parse_skill_desc(skill_md),
+                        "platforms": self._parse_platforms(skill_md),
                     })
         return skills
 
@@ -31,21 +31,32 @@ class SkillManager:
         except Exception:
             return "解析描述失败"
 
+    def _parse_platforms(self, md_path: Path) -> list[str]:
+        try:
+            for line in md_path.read_text(encoding="utf-8").splitlines():
+                if line.lower().startswith("platforms:"):
+                    return [item.strip() for item in line.split(":", 1)[1].split(",") if item.strip()]
+        except OSError:
+            pass
+        return ["Windows", "Linux"]
+
     def load_skill_detail(self, skill_name: str) -> str:
+        if Path(skill_name).name != skill_name:
+            return "[错误] 技能包名称不能包含路径。"
         target = SKILLS_DIR / skill_name / 'SKILL.md'
         if target.exists():
             return target.read_text(encoding='utf-8')
         return f"未找到技能包 {skill_name} 的 SKILL.md 文档。"
 
     def install_skill(self, source_path: str) -> str:
-        src = Path(source_path)
+        src = Path(source_path).resolve()
         if not src.exists():
             return f"[错误] 指定安装路径不存在: {source_path}"
         
         if src.is_dir():
             dest = SKILLS_DIR / src.name
             if dest.exists():
-                shutil.rmtree(dest)
+                return f"[错误] 技能包已存在，拒绝覆盖: {src.name}"
             shutil.copytree(src, dest)
             return f"成功安装技能包文件夹: {src.name}"
         elif src.suffix.lower() == '.zip':
