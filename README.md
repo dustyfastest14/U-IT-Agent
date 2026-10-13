@@ -24,6 +24,25 @@
 
 ---
 
+## 🛠️ 内置工具能力清单 (Tool Calling)
+
+Agent 依托 OpenAI 规范的 Function Calling 自动选择并调用以下底层工具进行智能排障：
+
+| 工具名称 | 功能描述 | 平台支持 | 权限与安全性 |
+| :--- | :--- | :--- | :--- |
+| `get_bsod_crashes` | **蓝屏/死机专精**：解析 Minidump 转储、Kernel-Power 41 异常关机及 BugCheck 停机码中文释义；Linux 下提取 Panic/OOM 记录 | Windows / Linux | 只读自动放行 |
+| `get_bitlocker_status` | **磁盘加密专精**：免管理员提权读取全盘 BitLocker 保护状态、转换进度与加密算法；Linux 检查 LUKS 映射 | Windows / Linux | 只读自动放行 |
+| `run_command` | **命令执行**：Windows 基于常驻持久化 PowerShell 管道执行（毫秒级、跨命令保留变量与上下文、超时自愈）；Linux 路由至 Bash | Windows / Linux | 只读自动放行；涉及修改需确认 |
+| `get_processes` | 检索当前活跃进程列表，按 CPU/内存占用降序排列 | Windows / Linux | 只读自动放行 |
+| `get_services` | 检索关键系统服务运行状态与自启动配置 | Windows / Linux | 只读自动放行 |
+| `get_disk_memory` | 统计各磁盘挂载分区容量使用率及系统物理内存剩余 | Windows / Linux | 只读自动放行 |
+| `get_event_errors` | 查询系统与应用日志中最近 N 小时内的严重 Error/Critical 事件 | Windows / Linux | 只读自动放行 |
+| `test_network` | 诊断目标域名/IP 的 DNS 解析、Ping 延迟与连通性 | Windows / Linux | 只读自动放行 |
+| `read_file` | 安全读取系统配置文件或关键应用日志内容（支持行数限制） | Windows / Linux | 只读自动放行 |
+| `run_script` | 受限执行内置在 `scripts/` 或 Skill 包中的专用诊断脚本 | Windows / Linux | 需用户确认 |
+| `get_machine_history` | 查询当前主机的历史故障画像、排查档案与过往案例记录 | 通用 | 只读自动放行 |
+| `write_report` | 将最终排查结论与修复建议生成 Markdown 格式报告至 `workspace/` | 通用 | 自动写入沙箱 |
+
 ## 📂 项目结构
 
 ```text
@@ -44,8 +63,8 @@ U-IT-Agent/
 │   ├── prompts/
 │   │   └── system.md       # 系统 Prompt 与排查行为规范
 │   └── tools/
-│       ├── system.py       # 内置只读系统诊断工具集 (进程/服务/磁盘/日志/网络)
-│       └── shell.py        # 受限 PowerShell / Bash / 脚本执行器
+│       ├── system.py       # 内置只读系统诊断工具集 (进程/服务/磁盘/网络/蓝屏崩溃/BitLocker)
+│       └── shell.py        # 持久化 PowerShell 会话管道 / Bash / 脚本执行器
 ├── skills/                 # 可扩展 Skill 技能包目录
 │   └── _example-network-diag/
 │       └── SKILL.md        # 示例网络诊断 Skill 包
