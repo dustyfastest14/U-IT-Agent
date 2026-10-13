@@ -9,6 +9,10 @@
 ## 💡 核心特性
 
 - **跨平台启动**：Windows 使用 `启动.bat`，Linux 使用 `start.sh`。
+- **持久化 PowerShell 会话管道**：借鉴 PowerShell MCP 机制，Windows 运维支持常驻会话管道，变量与上下文跨命令保留，执行速度大幅提速（毫秒级响应），支持长命令超时自动中断与故障自愈。
+- **专精运维诊断工具集**：
+  - **蓝屏与死机排查 (`get_bsod_crashes`)**：一键提取 Minidump 堆栈、Kernel-Power 41 异常关机事件与 BugCheck 停机码自动中文解码。
+  - **全盘 BitLocker 检测 (`get_bitlocker_status`)**：免管理员提权检测各卷加密保护状态、转换进度与算法。
 - **OpenAI 兼容 API**：支持任意 OpenAI 兼容的 LLM 接口，借助 Tool Calling 实现多轮智能诊断决策。
 - **只读诊断与安全确认**：
   - 默认优先使用只读系统工具收集进程、服务、磁盘/内存、Windows 事件日志或 Linux journal/dmesg 及网络连通性。

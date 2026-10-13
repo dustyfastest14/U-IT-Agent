@@ -15,6 +15,27 @@ TOOLS_SCHEMA = [
     {
         "type": "function",
         "function": {
+            "name": "get_bsod_crashes",
+            "description": "??????????????????? Windows Minidump ???Kernel-Power 41 ????? BugCheck ????? Linux ?? Panic/OOM ??????????",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "description": "????????????? 10"}
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_bitlocker_status",
+            "description": "???? BitLocker ?????????????????Windows ???? CIM ???Linux ?? LUKS?????????",
+            "parameters": {"type": "object", "properties": {}}
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "get_crash_records",
             "description": "获取 Windows 蓝屏/转储或 Linux 内核 Panic、OOM、崩溃记录（只读自动放行）",
             "parameters": {
@@ -333,7 +354,11 @@ class LLMEngine:
         try:
             if not isinstance(args, dict):
                 args = {}
-            if name == "get_crash_records":
+            if name == "get_bsod_crashes":
+                return sys_tools.get_bsod_crashes(**args)
+            elif name == "get_bitlocker_status":
+                return sys_tools.get_bitlocker_status()
+            elif name == "get_crash_records":
                 return sys_tools.get_crash_records(**args)
             elif name == "get_processes":
                 return sys_tools.get_processes(**args)

@@ -1,7 +1,12 @@
+﻿import base64
+import concurrent.futures
 import platform
 import re
 import shlex
 import subprocess
+import threading
+import time
+import uuid
 from pathlib import Path
 
 from agent.config import CONFIRM_MODE, FORBIDDEN_KEYWORDS, SCRIPTS_DIR, SKILLS_DIR
@@ -18,6 +23,107 @@ MODIFY_PATTERNS = [
 ]
 
 
+class PersistentPowerShell:
+    """保持一个长生命周期的 PowerShell 进程会话，实现快速执行、跨命令变量保留与命令超时中断。"""
+
+    def __init__(self):
+        self._proc: subprocess.Popen | None = None
+        self._lock = threading.Lock()
+        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+
+    def _start(self):
+        try:
+            if self._proc and self._proc.poll() is None:
+                self._proc.kill()
+        except Exception:
+            pass
+        try:
+            self._proc = subprocess.Popen(
+                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "-"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+            )
+        except Exception:
+            self._proc = None
+
+    def _read_output(self, token: str) -> str:
+        end_marker = f"[__DONE__:{token}]"
+        out_parts = []
+        err_parts = []
+        while True:
+            if not self._proc or self._proc.poll() is not None:
+                break
+            line = self._proc.stdout.readline()
+            if not line:
+                break
+            line_str = line.strip()
+            if line_str == end_marker:
+                break
+            if line_str.startswith("[__OUT_B64__:") and line_str.endswith("]"):
+                raw_b64 = line_str[len("[__OUT_B64__:"):-1]
+                out_parts.append(base64.b64decode(raw_b64).decode("utf-8", errors="replace"))
+            elif line_str.startswith("[__ERR_B64__:") and line_str.endswith("]"):
+                raw_b64 = line_str[len("[__ERR_B64__:"):-1]
+                err_parts.append(base64.b64decode(raw_b64).decode("utf-8", errors="replace"))
+        return ("".join(out_parts) + "".join(err_parts)).strip()
+
+    def run(self, cmd: str, timeout: int = 60) -> str:
+        with self._lock:
+            if self._proc is None or self._proc.poll() is not None:
+                self._start()
+            if self._proc is None:
+                return ""
+
+            token = uuid.uuid4().hex
+            cmd_b64 = base64.b64encode(cmd.encode("utf-8")).decode("ascii")
+            ps_line = (
+                f". {{ try {{ $raw = . ([ScriptBlock]::Create([System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('{cmd_b64}')))); "
+                f"$str = $raw | Out-String; if ($str) {{ $b = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($str)); "
+                f"[Console]::Out.WriteLine('[__OUT_B64__:' + $b + ']') }} }} "
+                f"catch {{ $err = $_ | Out-String; $b = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($err)); "
+                f"[Console]::Out.WriteLine('[__ERR_B64__:' + $b + ']') }} "
+                f"finally {{ [Console]::Out.WriteLine('[__DONE__:{token}]') }} }}\n"
+            )
+            try:
+                self._proc.stdin.write(ps_line)
+                self._proc.stdin.flush()
+            except Exception as e:
+                self._start()
+                return f"[会话异常已重置] 写入命令失败: {e}"
+
+            future = self._executor.submit(self._read_output, token)
+            try:
+                out = future.result(timeout=max(1, min(int(timeout), 300)))
+                return out if out else "命令已成功执行（无打印输出）。"
+            except concurrent.futures.TimeoutError:
+                try:
+                    self._proc.kill()
+                except Exception:
+                    pass
+                self._start()
+                return f"[超时] 命令在 {timeout} 秒内未完成，已自动中断并重置会话。"
+
+    def reset(self):
+        with self._lock:
+            self._start()
+
+
+_ps_session = PersistentPowerShell() if IS_WINDOWS else None
+
+
+def reset_shell_session() -> str:
+    """重置持久化会话状态。"""
+    if _ps_session:
+        _ps_session.reset()
+        return "PowerShell 持久会话已成功重置。"
+    return "非 Windows 平台无持久会话需重置。"
+
+
 def is_cmd_safe(command: str) -> bool:
     """判断命令是否包含配置中明确禁止的高危操作。"""
     command_lower = command.lower()
@@ -26,7 +132,9 @@ def is_cmd_safe(command: str) -> bool:
 
 def is_query_only_cmd(command: str) -> bool:
     """修改系统状态的命令必须经人工确认。"""
-    command_lower = command.lower()
+    command_lower = command.lower().strip()
+    if re.fullmatch(r"start-sleep(\s+.*)?", command_lower):
+        return True
     return not any(re.search(pattern, command_lower) for pattern in MODIFY_PATTERNS)
 
 
@@ -42,7 +150,7 @@ def _confirm(command: str) -> str | None:
 
 
 def run_command(command: str = "", timeout: int = 60) -> str:
-    """按当前操作系统执行 PowerShell 或 Bash 命令。"""
+    """按当前操作系统执行 PowerShell 或 Bash 命令。Windows 环境优先复用持久化 PowerShell 会话。"""
     if not command.strip():
         return "[参数错误] run_command 缺少必要参数 command。"
     if not is_cmd_safe(command):
@@ -51,6 +159,12 @@ def run_command(command: str = "", timeout: int = 60) -> str:
     rejected = _confirm(command)
     if rejected:
         return rejected
+
+    if IS_WINDOWS and _ps_session is not None:
+        try:
+            return _ps_session.run(command, timeout=timeout)
+        except Exception:
+            pass
 
     executable = "powershell" if IS_WINDOWS else "bash"
     arguments = [executable, "-NoProfile", "-Command", command] if IS_WINDOWS else [executable, "-c", command]
