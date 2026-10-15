@@ -1,4 +1,4 @@
-﻿import base64
+import base64
 import concurrent.futures
 import platform
 import re
@@ -42,7 +42,7 @@ class PersistentPowerShell:
                 ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "-"],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
                 text=True,
                 encoding="utf-8",
                 errors="replace",
@@ -55,6 +55,7 @@ class PersistentPowerShell:
         end_marker = f"[__DONE__:{token}]"
         out_parts = []
         err_parts = []
+        raw_parts = []
         while True:
             if not self._proc or self._proc.poll() is not None:
                 break
@@ -70,7 +71,10 @@ class PersistentPowerShell:
             elif line_str.startswith("[__ERR_B64__:") and line_str.endswith("]"):
                 raw_b64 = line_str[len("[__ERR_B64__:"):-1]
                 err_parts.append(base64.b64decode(raw_b64).decode("utf-8", errors="replace"))
-        return ("".join(out_parts) + "".join(err_parts)).strip()
+            elif line_str:
+                raw_parts.append(line)
+        combined = ("".join(raw_parts) + "".join(out_parts) + "".join(err_parts)).strip()
+        return combined
 
     def run(self, cmd: str, timeout: int = 60) -> str:
         with self._lock:

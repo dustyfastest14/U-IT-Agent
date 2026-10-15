@@ -16,11 +16,11 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "get_bsod_crashes",
-            "description": "??????????????????? Windows Minidump ???Kernel-Power 41 ????? BugCheck ????? Linux ?? Panic/OOM ??????????",
+            "description": "专精蓝屏与异常崩溃分析：解析 Windows Minidump 转储、Kernel-Power 41 异常关机及 BugCheck 停机码解码；Linux 提取 Panic/OOM 记录（只读自动放行）",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "limit": {"type": "integer", "description": "????????????? 10"}
+                    "limit": {"type": "integer", "description": "获取记录最大条数，默认 10"}
                 }
             }
         }
@@ -29,7 +29,7 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "get_bitlocker_status",
-            "description": "???? BitLocker ?????????????????Windows ???? CIM ???Linux ?? LUKS?????????",
+            "description": "全盘 BitLocker 加密与保护状态检测：免管理员提权读取 Windows 各卷保护状态与算法；Linux 检查 LUKS 映射（只读自动放行）",
             "parameters": {"type": "object", "properties": {}}
         }
     },
@@ -188,7 +188,7 @@ class LLMEngine:
         self.skill_mgr = skill_mgr
         
         sys_prompt_path = BASE_DIR / 'agent' / 'prompts' / 'system.md'
-        self.base_sys_prompt = sys_prompt_path.read_text(encoding='utf-8')
+        self.base_sys_prompt = sys_prompt_path.read_text(encoding='utf-8-sig')
 
     def _build_system_context(self) -> str:
         mem_summary = self.memory_mgr.get_summary()

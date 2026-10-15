@@ -4,6 +4,15 @@ import re
 import platform
 from pathlib import Path
 
+# Set up UTF-8 streams on Windows to prevent UnicodeEncodeError in GBK/CP936 consoles
+if sys.platform == 'win32':
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+        sys.stdin.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+
 # Ensure project root is in sys.path
 BASE_DIR = Path(__file__).resolve().parent.parent
 if str(BASE_DIR) not in sys.path:
@@ -103,7 +112,7 @@ def main():
                 diagnosis_conclusion=reply,
                 tags=auto_tags
             )
-            print(f"\n[✓ 诊断记录已自动归档至本机档案 memory/machines/{memory_mgr.machine_id}.json 与 logs/ 目录]")
+            print(f"\n[OK] 诊断记录已自动归档至本机档案 memory/machines/{memory_mgr.machine_id}.json 与 logs/ 目录]")
 
 if __name__ == '__main__':
     main()
