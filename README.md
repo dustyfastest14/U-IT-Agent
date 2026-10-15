@@ -147,6 +147,26 @@ python agent/main.py
 
 ---
 
+## 📝 版本更新历史 (Changelog)
+
+### v1.3.1 (2026-10-15)
+- **Windows 控制台全链路 UTF-8 自适应**：修复在默认 CP936 (GBK) 命令行下流式输出 Emoji 及完成标识时触发 `UnicodeEncodeError` 导致闪退的缺陷；`启动.bat` 增加 `chcp 65001` 与 `PYTHONIOENCODING=utf-8`，Python 入口主动重配置流编码并提升字符兼容性。
+- **Tool Calling Schema 描述补全**：修复 `get_bsod_crashes` 与 `get_bitlocker_status` 工具描述在部分环境因字符集问题丢失为问号的缺陷，确保大模型准确识别工具能力与参数。
+- **PowerShell 持久会话死锁与输出防护**：将常驻会话的 `stderr` 管道合并至 `stdout`，防止大量错误输出填满 Windows 管道缓冲区引发进程挂起超时；增加原生控制台命令标准输出捕获支持。
+- **字符编码与 BOM 清理**：清除系统提示词与工具实现文件中的 UTF-8 BOM (Byte Order Mark, `0xEF 0xBB 0xBF`)，保证跨平台解析一致性。
+
+### v1.3.0 (2026-10-13)
+- **持久化 PowerShell 会话管道**：引入常驻管道机制，支持跨命令变量与环境保留，大幅降低启动开销并提供超时中断自愈能力。
+- **专精运维诊断工具集**：
+  - 新增 `get_bsod_crashes`：蓝屏堆栈、Kernel-Power 41 异常关机及 BugCheck 停机码自动中文解码。
+  - 新增 `get_bitlocker_status`：免提权检测全盘加密状态、算法与保护配置。
+- **工具清单与文档结构升级**：新增内置 12 项 Tool Calling 详细参数参考表与最新架构树。
+
+### v1.2.0 (2026-09-02)
+- **Linux 跨平台运维支持**：支持 Bash 管道执行、systemd/journalctl 日志排查与硬件信息采集；增加 `start.sh` 一键启动脚本。
+
+---
+
 ## 📄 开源许可
 
 本项目遵循 MIT 许可证。
