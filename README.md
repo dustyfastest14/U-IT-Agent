@@ -149,6 +149,10 @@ python agent/main.py
 
 ## 📝 版本更新历史 (Changelog)
 
+### v1.3.2 (2026-11-21)
+- **日志归档完整性修复**：移除诊断结论写入 `logs/` 时的 400 字截断，诊断结论现完整记录，便于事后复盘。
+- **仓库卫生**：`.gitignore` 新增 `python/` 排除规则，避免便携版 Python 运行时（约 92 MB）被误提交进仓库；将运行时自动生成的机器档案 `memory/machines/*.json` 移出版本控制；清理调试遗留文件 `delete`、`query` 与 `agent/runner.py`。
+
 ### v1.3.1 (2026-10-15)
 - **Windows 控制台全链路 UTF-8 自适应**：修复在默认 CP936 (GBK) 命令行下流式输出 Emoji 及完成标识时触发 `UnicodeEncodeError` 导致闪退的缺陷；`启动.bat` 增加 `chcp 65001` 与 `PYTHONIOENCODING=utf-8`，Python 入口主动重配置流编码并提升字符兼容性。
 - **Tool Calling Schema 描述补全**：修复 `get_bsod_crashes` 与 `get_bitlocker_status` 工具描述在部分环境因字符集问题丢失为问号的缺陷，确保大模型准确识别工具能力与参数。

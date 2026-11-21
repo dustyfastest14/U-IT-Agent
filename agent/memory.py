@@ -98,7 +98,7 @@ class MemoryManager:
                 f.write(f"问题症状: {user_symptom}\n")
                 if tool_summary:
                     f.write(f"执行排查: {tool_summary}\n")
-                f.write(f"诊断结论: {diagnosis_conclusion[:400]}\n")
+                f.write(f"诊断结论: {diagnosis_conclusion}\n")
                 f.write("-" * 50 + "\n")
         except Exception:
             pass
